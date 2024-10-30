@@ -1,0 +1,76 @@
+name: Deploy Spring Batch to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  EC2_HOST: ${{ secrets.HOST }}
+  USER: ubuntu
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: "temurin"
+
+      - name: Build .jar with Maven
+        run: mvn clean package
+        env:
+          MAVEN_OPTS: "-Dmaven.test.skip=true"
+
+      - name: Build Docker image
+        run: |
+          docker build -t openvpn-client-ssh .
+
+      - name: Create SSH key file
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
+          chmod 600 /tmp/ec2_key.pem
+
+      - name: Create OpenVPN config file
+        run: |
+          echo "${{ secrets.OPENVPN_CONFIG }}" > /tmp/client.ovpn
+
+      - name: Run OpenVPN client and connect to EC2
+        run: |
+          docker run -d --name openvpn-client \
+            --cap-add=NET_ADMIN \
+            --device=/dev/net/tun \
+            -v /tmp/client.ovpn:/etc/openvpn/client.ovpn \
+            -v /tmp/ec2_key.pem:/etc/openvpn/ec2_key.pem \
+            openvpn-client-ssh \
+            openvpn --config /etc/openvpn/client.ovpn
+
+      - name: Wait for VPN connection
+        run: |
+          sleep 20
+          docker logs openvpn-client
+
+      - name: Find .jar file
+        id: find_jar
+        run: |
+          JAR_FILE=$(find target -name "*.jar" -type f -exec basename {} \;)
+          echo "JAR_PATH=${JAR_FILE}" >> $GITHUB_ENV
+
+      - name: Copy project files into OpenVPN container
+        run: |
+          docker cp target/${{ env.JAR_PATH }} openvpn-client:${{ env.JAR_PATH }}
+
+      - name: Transfer files to EC2
+        run: |
+          docker exec openvpn-client scp -i /etc/openvpn/ec2_key.pem -o StrictHostKeyChecking=no -r ${{ env.JAR_PATH }} "$USER@$EC2_HOST:/home/ubuntu/batch/test/"
+
+      - name: Cleanup
+        run: |
+          docker stop openvpn-client
+          docker rm openvpn-client
