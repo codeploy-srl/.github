@@ -1,0 +1,13 @@
+{
+    "name": "Deploy Java EC2 Workflow",
+    "description": "Deploy Java EC2 CI workflow template.",
+    "iconName": "example-icon",
+    "categories": [
+        "Java"
+    ],
+    "filePatterns": [
+        "package.json$",
+        "^Dockerfile",
+        ".*\\.md$"
+    ]
+}
