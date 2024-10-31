@@ -1,0 +1,13 @@
+{
+    "name": "Deploy Python EC2 Workflow",
+    "description": "Deploy Python EC2 CI workflow template.",
+    "iconName": "example-icon",
+    "categories": [
+        "Python"
+    ],
+    "filePatterns": [
+        "package.json$",
+        "^Dockerfile",
+        ".*\\.md$"
+    ]
+}
