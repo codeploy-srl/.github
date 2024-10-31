@@ -1,0 +1,82 @@
+name: Deploy Batch Python to EC2
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          pip install black ruff
+
+      - name: Run Black formatter
+        run: black .
+
+      - name: Run Ruff linter
+        run: ruff check .
+
+      - name: Build Docker image
+        run: |
+          docker build -t openvpn-client-ssh .
+
+      - name: Create SSH key file
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > /tmp/ec2_key.pem
+          chmod 600 /tmp/ec2_key.pem
+
+      - name: Create OpenVPN config file
+        run: |
+          echo "${{ secrets.OPENVPN_CONFIG }}" > /tmp/client.ovpn
+
+      - name: Run OpenVPN client and connect to EC2
+        run: |
+          docker run -d --name openvpn-client \
+            --cap-add=NET_ADMIN \
+            --device=/dev/net/tun \
+            -v /tmp/client.ovpn:/etc/openvpn/client.ovpn \
+            -v /tmp/ec2_key.pem:/etc/openvpn/ec2_key.pem \
+            openvpn-client-ssh \
+            openvpn --config /etc/openvpn/client.ovpn
+
+      - name: Wait for VPN connection
+        run: |
+          sleep 20
+          docker logs openvpn-client
+
+      - name: Get project directory name
+        id: project_name
+        run: |
+          basename=$(basename "$GITHUB_WORKSPACE")
+          echo "PROJECT_NAME=${basename}" >> $GITHUB_ENV
+
+      - name: Copy project files into OpenVPN container
+        run: |
+          docker cp . openvpn-client:/${{ env.PROJECT_NAME }}
+
+      - name: Transfer files to EC2
+        env:
+          EC2_HOST: ${{ secrets.HOST }}
+          USER: ${{ secrets.USERNAME }}
+          PROJECT_NAME: ${{ env.PROJECT_NAME }}
+        run: |
+          docker exec openvpn-client scp -i /etc/openvpn/ec2_key.pem -o StrictHostKeyChecking=no -r /${PROJECT_NAME} "$USER@$EC2_HOST:/home/ubuntu/batch/"
+
+      - name: Cleanup
+        run: |
+          docker stop openvpn-client
+          docker rm openvpn-client
